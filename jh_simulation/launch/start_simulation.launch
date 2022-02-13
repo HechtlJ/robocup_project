@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <include file="$(find jh_simulation)/launch/tiago.launch">
+        <arg name="world_suffix" value="table_clu"/>
+    </include>
+
+    <include file="$(find move_object)/launch/table_segmentation.launch"/>
+
+    <include file="$(find gpd_ros)/launch/ur5.launch"/>
+
+    <node name="smach_viewer" pkg="smach_viewer" type="smach_viewer.py" output="log"/>  
+
+</launch>
