@@ -4,10 +4,12 @@
         <arg name="world_suffix" value="table_clu"/>
     </include>
 
-    <include file="$(find move_object)/launch/table_segmentation.launch"/>
+    <node name="table_segmentation" pkg="plane_segmentation" type="plane_seg" output="log"/>  
 
     <include file="$(find gpd_ros)/launch/ur5.launch"/>
 
     <node name="smach_viewer" pkg="smach_viewer" type="smach_viewer.py" output="log"/>  
+
+    <node name="grabber" pkg="grab_capabilities" type="grabber" output="screen"/>  
 
 </launch>
