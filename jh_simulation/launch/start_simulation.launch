@@ -12,4 +12,6 @@
 
     <node name="grabber" pkg="grab_capabilities" type="grabber" output="screen"/>  
 
+    <include file="$(find object_detection)/launch/object_detection.launch"/>
+
 </launch>

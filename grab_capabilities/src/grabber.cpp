@@ -3,7 +3,6 @@
 Grabber::Grabber(ros::NodeHandle n)
 {
   nh_ = n;
-
   //****************Add the table collision********
   // avoid to collide with the table
   addTableCollisionToWorld(0.4, 0.5, "table1");
@@ -13,6 +12,12 @@ Grabber::Grabber(ros::NodeHandle n)
   // Services
   server_raise_arm_ = nh_.advertiseService("/grabber/raise_arm", &Grabber::raiseArm, this);
   server_pick_up_ = nh_.advertiseService("/grabber/pick_up", &Grabber::pickUp, this);
+  server_object_in_hand_ = nh_.advertiseService("/grabber/object_in_hand", &Grabber::srvIsObjectInHand, this);
+  server_put_object_in_bin_ = nh_.advertiseService("/grabber/put_object_in_bin", &Grabber::srvPutObjectInBin, this);
+  server_identify_object_ = nh_.advertiseService("/grabber/identify_object", &Grabber::srvIdentifyObject, this);
+  server_obs_pre_grasp_ = nh_.advertiseService("/grabber/obs_pre_grasp", &Grabber::srvObservePreGrasp, this);
+  server_obs_after_grasp_ = nh_.advertiseService("/grabber/obs_after_grasp", &Grabber::srvObserveAfterGrasp, this);
+  
 
   // Publisher
   pub_gripper_ = nh_.advertise<trajectory_msgs::JointTrajectory>("/gripper_controller/command", 1);
@@ -20,7 +25,8 @@ Grabber::Grabber(ros::NodeHandle n)
   // Subscriber
   sub_grasps = nh_.subscribe<gpd_ros::GraspConfigList>("/detect_grasps/clustered_grasps",
                                                        1, &Grabber::processGraspPose, this);
-  ros::Subscriber sub_table_height;
+  // subscribe to bounding boxes from yolo
+  sub_object_detections_ = nh_.subscribe("/darknet_ros/bounding_boxes", 5, &Grabber::detectionCallback, this);
 }
 
 int Grabber::armTorsoMotion(geometry_msgs::PoseStamped &arm_pos, const std::string &reference_frame)
@@ -203,7 +209,11 @@ void Grabber::removeCollisionFromWorld(const std::string &remove_id)
   ros::Duration(0.3).sleep();
 }
 
-void Grabber::jointMotion(double (&joint_position)[8])
+void Grabber::jointMotion(double (&joint_position)[8]){
+  jointMotion(joint_position, 1.0);
+}
+
+void Grabber::jointMotion(double (&joint_position)[8], double max_velocity_scaling_factor)
 {
   std::map<std::string, double> target_position;
   target_position["torso_lift_joint"] = joint_position[0];
@@ -225,7 +235,7 @@ void Grabber::jointMotion(double (&joint_position)[8])
   torso_arm_joint_names = group_arm_torso.getJoints();
 
   group_arm_torso.setStartStateToCurrentState();
-  group_arm_torso.setMaxVelocityScalingFactor(1.0);
+  group_arm_torso.setMaxVelocityScalingFactor(max_velocity_scaling_factor);
 
   for (unsigned int i = 0; i < torso_arm_joint_names.size(); ++i)
     if (target_position.count(torso_arm_joint_names[i]) > 0)
@@ -332,6 +342,7 @@ void Grabber::processGraspPose(const gpd_ros::GraspConfigListConstPtr &grasp_lst
 
 bool Grabber::pickUp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res)
 {
+  openGripper(false);
   while (!grasp_processed_)
   {
     ros::spinOnce();
@@ -374,27 +385,7 @@ bool Grabber::pickUp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res)
   // double arm_pos2[6]={x, y, z, 1.637, 0.466, -0.035};
   armTorsoMotion(grasp_pose_);
 
-  //------close the gripper------------------------
-  trajectory_msgs::JointTrajectory gripper_msg;
-  gripper_msg.joint_names.resize(2);
-  gripper_msg.joint_names[0] = "gripper_left_finger_joint";
-  gripper_msg.joint_names[1] = "gripper_right_finger_joint";
-
-  gripper_msg.points.resize(1);
-  gripper_msg.points[0].positions.resize(2);
-  gripper_msg.points[0].effort.resize(2);
-
-  gripper_msg.points[0].positions[0] = 0.0005;
-  gripper_msg.points[0].positions[1] = 0.0005;
-
-  gripper_msg.points[0].effort[0] = 40;
-  gripper_msg.points[0].effort[1] = 40;
-
-  gripper_msg.points[0].time_from_start = ros::Duration(1.2);
-  // publish the gripper control message
-  ROS_INFO("-------Close the gripper---------");
-  pub_gripper_.publish(gripper_msg);
-  ros::Duration(1.5).sleep();
+  closeGripper();
 
   //--------------raise the arm----------------
   geometry_msgs::PoseStamped grasp_pose_up_temp = grasp_pose_;
@@ -420,4 +411,155 @@ void Grabber::callServiceToFindGrasp()
     if_success = send_pcl_client_.call(enable_send_srv);
     ros::Duration(1).sleep();
   } while (!if_success);
+}
+
+void Grabber::openGripper(bool blocking){
+  trajectory_msgs::JointTrajectory gripper_msg;
+  gripper_msg.joint_names.resize(2);
+  gripper_msg.joint_names[0] = "gripper_left_finger_joint";
+  gripper_msg.joint_names[1] = "gripper_right_finger_joint";
+
+  gripper_msg.points.resize(1);
+  gripper_msg.points[0].positions.resize(2);
+  gripper_msg.points[0].effort.resize(2);
+
+  gripper_msg.points[0].positions[0] = 0.045;
+  gripper_msg.points[0].positions[1] = 0.045;
+
+  gripper_msg.points[0].effort[0] = 0;
+  gripper_msg.points[0].effort[1] = 0;
+
+  gripper_msg.points[0].time_from_start = ros::Duration(0.4);
+    
+  // publish the gripper control message
+  pub_gripper_.publish(gripper_msg);
+  if(blocking){
+    ros::Duration(1.0).sleep();
+  }
+}
+
+
+void Grabber::closeGripper(bool blocking){
+  trajectory_msgs::JointTrajectory gripper_msg;
+  gripper_msg.joint_names.resize(2);
+  gripper_msg.joint_names[0] = "gripper_left_finger_joint";
+  gripper_msg.joint_names[1] = "gripper_right_finger_joint";
+
+  gripper_msg.points.resize(1);
+  gripper_msg.points[0].positions.resize(2);
+  gripper_msg.points[0].effort.resize(2);
+
+  gripper_msg.points[0].positions[0] = 0.0005;
+  gripper_msg.points[0].positions[1] = 0.0005;
+
+  gripper_msg.points[0].effort[0] = 40;
+  gripper_msg.points[0].effort[1] = 40;
+
+  gripper_msg.points[0].time_from_start = ros::Duration(1.2);
+  // publish the gripper control message
+  ROS_INFO("-------Close the gripper---------");
+  pub_gripper_.publish(gripper_msg);
+  
+  if(blocking){
+    ros::Duration(1.0).sleep();
+  }
+}
+
+
+bool Grabber::isObjectInHand(){
+  tf::StampedTransform transform_fingers;
+  tf_listener_.lookupTransform("gripper_left_finger_link","gripper_right_finger_link",ros::Time(0),transform_fingers);
+  
+  // get the distance between two frames based on the translation vector
+  tf::Vector3 v_dist = transform_fingers.getOrigin(); 
+  
+  if (v_dist.length() > 0.005) // if the norm is bigger than the minimal distance of to finger frames, successfully hold in hand
+  {
+    ROS_INFO("object get in hand!");
+    return true;
+  }
+  else
+  {
+    return false;
+  }
+}
+
+bool Grabber::srvIsObjectInHand(std_srvs::SetBoolRequest &req, std_srvs::SetBoolResponse &res){
+  bool object_in_hand = isObjectInHand();
+  res.success= object_in_hand;
+  return true;
+}
+
+bool Grabber::srvPutObjectInBin(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res){
+  addTableCollisionToWorld(0.60,0.55,"table_tall2",1.2); 
+  ros::Duration(0.2).sleep();
+  double arm_pos3[8]={0.156, 0.1571, 0.2792, 0.0349, 1.4661, -1.2915,0.1745,-0.1222};
+  jointMotion(arm_pos3);
+
+  removeCollisionFromWorld("table_tall2");
+
+  openGripper(true);
+
+  ros::Duration(0.5).sleep();
+
+  std::cout << "**********Pre Grasp************" << std::endl;
+  obs_pre_grasp.print();
+
+  std::cout << "**********After Grasp************" << std::endl;
+  obs_after_grasp.print();
+
+  std::cout << "**********Inspect************" << std::endl;
+  obs_inspect_object.print();
+
+  return true;
+}
+
+bool Grabber::srvIdentifyObject(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res){
+  double arm_pos1[8]={0.156, 0.36, 0.49, -1.12, 1.79, -0.75, 1.03, 0.12};
+  double arm_pos2[8]={0.156, 0.36, 0.49, -1.12, 1.79, -0.75, 1.03, 1.6};
+
+  
+
+  jointMotion(arm_pos1);
+  obs_current.clear();
+  jointMotion(arm_pos2, 0.1);
+
+  obs_inspect_object = obs_current;
+  obs_inspect_object.print();
+
+  return true;
+}
+
+void Grabber::detectionCallback(const darknet_ros_msgs::BoundingBoxesConstPtr &msg)
+{
+  // copy rectangles
+  //detections_.insert(detections_.end(), msg->bounding_boxes.begin(), msg->bounding_boxes.end());
+
+  /*for(int i=0; i<msg->bounding_boxes.size(); i++){
+    observation_start[msg->bounding_boxes[i].Class] += 1;
+  }
+  observation_start["num_detections"] += 1;*/
+
+  
+  for(int i=0; i<msg->bounding_boxes.size(); i++){
+    Observation new_observation(msg->bounding_boxes[i]);
+    obs_current.addObservation(new_observation);
+  }
+}
+
+bool Grabber::srvObservePreGrasp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res){
+  obs_current.clear();
+  ros::Duration(2).sleep();
+  obs_pre_grasp = obs_current;
+  obs_pre_grasp.print();
+  return true;
+}
+
+
+bool Grabber::srvObserveAfterGrasp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res){
+  obs_current.clear();
+  ros::Duration(2).sleep();
+  obs_after_grasp = obs_current;
+  obs_after_grasp.print();
+  return true;
 }

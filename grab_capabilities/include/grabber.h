@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include  <iostream>
+
 #include <ros/ros.h>
 #include <std_srvs/Empty.h>
 #include <std_srvs/SetBool.h>
@@ -12,7 +15,32 @@
 
 #include <gpd_ros/GraspConfigList.h>
 #include <tf/tf.h>
+#include <tf/transform_listener.h>
 
+#include <image_transport/image_transport.h>
+#include <sensor_msgs/image_encodings.h>
+
+
+/*********************************************************************
+* darknet
+********************************************************************/
+#include <darknet_ros_msgs/BoundingBoxes.h>
+#include <darknet_ros_msgs/BoundingBox.h>
+#include <darknet_ros_msgs/CheckForObjectsAction.h>
+
+#include <message_filters/subscriber.h>
+#include <message_filters/synchronizer.h>
+#include <message_filters/sync_policies/exact_time.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <tf/transform_listener.h>
+#include <tf/transform_listener.h>
+#include <tf/transform_broadcaster.h>
+#include <tf_conversions/tf_eigen.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/image_encodings.h>
+
+
+#include "detection.h"
 
 class Grabber
 {
@@ -36,16 +64,33 @@ private:
     void removeCollisionFromWorld(const std::string &remove_id);
 
     void jointMotion(double (&joint_position)[8]);
+    void jointMotion(double (&joint_position)[8], double max_velocity_scaling_factor);
 
+
+    // Services
     bool raiseArm(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
     bool pickUp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
+    bool srvIsObjectInHand(std_srvs::SetBoolRequest &req, std_srvs::SetBoolResponse &res);
+    bool srvPutObjectInBin(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
+    bool srvIdentifyObject(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
+    bool srvObservePreGrasp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
+    bool srvObserveAfterGrasp(std_srvs::EmptyRequest &req, std_srvs::EmptyResponse &res);
 
 
     void callServiceToFindGrasp();
 
 
+    // Functions for controlling armcontinue
+    void openGripper(bool blocking = true);
+    void closeGripper(bool blocking = true);
+
+    // check functions
+    bool isObjectInHand();
+
+
     // Callbacks
     void processGraspPose(const gpd_ros::GraspConfigListConstPtr& msg);
+    void detectionCallback(const darknet_ros_msgs::BoundingBoxesConstPtr &msg);
 
 public:
 private:
@@ -57,13 +102,26 @@ private:
     // Subscriber
     ros::Subscriber sub_grasps;
     ros::Subscriber sub_table_height;
+    ros::Subscriber sub_object_detections_;
+    
 
     // Service Server
     ros::ServiceServer server_raise_arm_;
     ros::ServiceServer server_pick_up_;
+    ros::ServiceServer server_object_in_hand_;
+    ros::ServiceServer server_put_object_in_bin_;
+    ros::ServiceServer server_identify_object_;
+    ros::ServiceServer server_obs_pre_grasp_;
+    ros::ServiceServer server_obs_after_grasp_;
 
     // Service Clients
     ros::ServiceClient send_pcl_client_;
+
+
+    tf::TransformListener tf_listener_;
+
+    std::string camera_frame_;                //!< camera frame name
+    ros::Subscriber object_detections_sub_;   //!< sub detections form detector
 
 
 
@@ -80,4 +138,10 @@ private:
 
     // msg type to store the center of the object collision
     geometry_msgs::Point collision_center_pick_;
+
+    SceneObservation obs_current;
+    SceneObservation obs_pre_grasp;
+    SceneObservation obs_after_grasp;
+    SceneObservation obs_inspect_object;
+
 };

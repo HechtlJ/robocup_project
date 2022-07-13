@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <param name="use_sim_time" value="true" />
+
+  <!-- Console launch prefix -->
+  <arg name="launch_prefix" default=""/>
+  <!--node pkg="rosbag" type="play" name="player" args=" -rate=1 -l $(find plane_segmentation)/bag/tutorial4.bag"/-->
+  
+  <!-- Config and weights folder. -->
+  <arg name="yolo_weights_path"          default="$(find darknet_ros)/yolo_network_config/weights"/>
+  <arg name="yolo_config_path"           default="$(find darknet_ros)/yolo_network_config/cfg"/>
+
+  <!-- ROS and network parameter files -->
+  <arg name="ros_param_file"             default="$(find object_detection)/config/ros.yaml"/>
+  <arg name="network_param_file"         default="$(find darknet_ros)/config/yolov3.yaml"/>
+
+  <!-- Load parameters -->
+  <rosparam command="load" ns="darknet_ros" file="$(arg ros_param_file)"/>
+  <rosparam command="load" ns="darknet_ros" file="$(arg network_param_file)"/>
+
+  <!-- Starting Node image_channel_converter to convert camera images to bgr -->
+  <node pkg="object_detection" type="image_channel_converter" name="image_channel_converter"/>
+
+  <!-- Start darknet and ros wrapper -->
+  <node pkg="darknet_ros" type="darknet_ros" name="darknet_ros" launch-prefix="$(arg launch_prefix)">
+    <param name="weights_path"          value="$(arg yolo_weights_path)" />
+    <param name="config_path"           value="$(arg yolo_config_path)" />
+    <param name="/subscribers/camera_reading/topic" value="/image_converter/output" />
+  </node>
+
+	<!-- run rviz if needed -->
+	<!--<node name="rviz" pkg="rviz" type="rviz" args="-d $(find object_detection)/config/objects_detection.rviz"/> -->
+
+</launch>

@@ -27,7 +27,7 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR} #Needed to find all headers
 )
 
-add_executable(grabber src/grabber_node.cpp src/grabber.cpp)
+add_executable(grabber src/grabber_node.cpp src/grabber.cpp src/detection.cpp)
 target_link_libraries(grabber ${catkin_LIBRARIES} move_object)
 
 

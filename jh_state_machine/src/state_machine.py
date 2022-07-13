@@ -10,6 +10,8 @@ from tmp_state import TmpState
 from turn_head_down import TurnHeadDownState
 from gripper_setup import GripperSetupState
 from execute_grasp import ExecuteGraspState
+from put_object_in_bin import PutObjectInBinState
+from identify_object import IdentifyObjectState
 
 
 if __name__ == '__main__':
@@ -20,18 +22,19 @@ if __name__ == '__main__':
 
     # Open the container
     with sm:
-        # Add states to the container
-        smach.StateMachine.add('Init', InitState(), 
-                               transitions={'success':'TurnHeadDown'})
+        smach.StateMachine.add('Init', InitState(), transitions={'success':'TurnHeadDown'})
         
         smach.StateMachine.add('TurnHeadDown', TurnHeadDownState(), transitions={'finish':'GripperSetup'})
 
         smach.StateMachine.add('GripperSetup', GripperSetupState(), transitions={'finish':'ExecuteGrasp'})
 
-        smach.StateMachine.add('ExecuteGrasp', ExecuteGraspState(), transitions={'finish':'Tmp'})
+        smach.StateMachine.add('ExecuteGrasp', ExecuteGraspState(), transitions={'grasp_successful':'IdentifyObject', 'grasp_failed':'GripperSetup'})
 
-        smach.StateMachine.add('Tmp', TmpState(), 
-                               transitions={'finish':'finish'})
+        smach.StateMachine.add('IdentifyObject', IdentifyObjectState(), transitions={'finished':'PutObjectInBin'})
+
+        smach.StateMachine.add('PutObjectInBin', PutObjectInBinState(), transitions={'finished':'Tmp'})
+
+        smach.StateMachine.add('Tmp', TmpState(), transitions={'finish':'finish', 'again':'GripperSetup'})
 
     # Create and start the introspection server
     sis = smach_ros.IntrospectionServer('server_name', sm, '/SM_ROOT')

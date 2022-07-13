@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
-import rospy
 import smach
-import smach_ros
 
-class TmpState(smach.State):
+class AgainState(smach.State):
     def __init__(self):
-        smach.State.__init__(self, outcomes=['finish'])
+        smach.State.__init__(self, outcomes=['finish', 'again'])
 
     def execute(self, userdata):
-        raw_input("Press button to end")
-        return 'finish'
+        string = raw_input("Press a and enter to do again or just enter to end\n")
+        if 'a' in string:
+            return 'again'
+        else:
+            return 'finish'
